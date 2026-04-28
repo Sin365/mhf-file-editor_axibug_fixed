@@ -1242,10 +1242,24 @@ impl App for MhfdatApp {
             }
             
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if ui.button("Save（原版保存模式）").clicked() {
                     if let Some(path) = &self.current_file {
                         // 1. Sauvegarder les données
                         match self.save_modified_data() {
+                            Ok(()) => {
+                                self.error_message = Some("File saved successfully.".to_string());
+                            },
+                            Err(e) => self.error_message = Some(format!("Failed to save file: {e}")),
+                        }
+                    } else {
+                        self.error_message = Some("No file loaded.".to_string());
+                    }
+                }
+
+                if ui.button("save（重建并瘦身模式）").clicked() {
+                    if let Some(path) = &self.current_file {
+                        // 1. Sauvegarder les données
+                        match self.rebuild_and_save() {
                             Ok(()) => {
                                 self.error_message = Some("File saved successfully.".to_string());
                             },

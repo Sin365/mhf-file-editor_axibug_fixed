@@ -205,7 +205,7 @@ fn main() -> Result<(), eframe::Error> {
     };
 
     eframe::run_native(
-        "MHF File Editor",
+        "MHF File Editor axibug fixed",
         options,
         Box::new(|_cc| Box::new(RootApp::default())),
     )
