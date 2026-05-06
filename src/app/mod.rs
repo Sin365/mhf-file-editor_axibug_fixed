@@ -1255,6 +1255,20 @@ impl App for MhfdatApp {
                         self.error_message = Some("No file loaded.".to_string());
                     }
                 }
+
+                if ui.button("Save 4 一键重建文件（瘦身 + 修复指针）").clicked() {
+                    if let Some(path) = &self.current_file {
+                        // 1. Sauvegarder les données
+                        match self.compact_and_save() {
+                            Ok(()) => {
+                                self.error_message = Some("File saved successfully.".to_string());
+                            },
+                            Err(e) => self.error_message = Some(format!("Failed to save file: {e}")),
+                        }
+                    } else {
+                        self.error_message = Some("No file loaded.".to_string());
+                    }
+                }
                 
                 // Bouton de compression JPK Type 4
                 if ui.button("Compress").clicked() {

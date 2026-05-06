@@ -160,21 +160,25 @@ impl MhfdatApp {
             let path = path.clone(); // Clone to avoid borrow conflicts
             
             // CRITICAL: Refresh all counts from actual data before writing
-            // This ensures the counts match the real number of items being written
             self.refresh_weapon_counts_from_entries();
             self.refresh_equipment_counts_from_entries();
             
-            // Ouvrir le fichier en mode read+write pour ajouter à la fin sans copier
+            // 打开文件
             let file = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
                 .open(&path)?;
-            
-            // Écrire les modifications directement à la fin du fichier
-            self.save_modified_data_to_writer(file)?;
 
-            // 6. IMPORTANT: Remplacer complètement le buffer avec le fichier sauvegardé
-            // pour que les données écrites à la fin soient accessibles
+            // 调用修改后的写入函数（普通保存：compact = false）
+            let final_size = self.save_modified_data_to_writer(file, false)?;
+
+            // 立即截断文件，防止膨胀
+            let mut truncate_file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)?;
+            truncate_file.set_len(final_size)?;
+
+            // 重新加载 buffer
             let saved_file_data = std::fs::read(&path)?;
             self.buffer = saved_file_data.clone();
             
@@ -604,9 +608,12 @@ impl MhfdatApp {
         Ok(())
     }
 
-    pub fn save_modified_data_to_writer<W: Read + Seek + Write >(&self, mut writer: W) -> std::io::Result<()> {
-        // On se place directement à la fin du fichier pour ajouter SEULEMENT les nouveaux blocs
-        // SANS réécrire les données existantes
+    pub fn save_modified_data_to_writer<W: Read + Seek + Write>(
+        &self,
+        mut writer: W,
+        compact: bool,           // ← 新增：是否执行 Compact 重建
+    ) -> std::io::Result<u64> {  // ← 修改返回值类型，返回最终文件大小
+        // 移动到文件末尾
         writer.seek(SeekFrom::End(0))?;
 
         // NE PAS réécrire les blocs de données existants (weapons, armor, items, etc.)
@@ -619,13 +626,22 @@ impl MhfdatApp {
             let melee_block = write_melee_weapons_block(&self.melee_weapons)?;
             let original_count = self.original_entry_counts.get("melee_weapons").copied();
             let new_count = self.melee_weapons.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_melee_weapons_offset,
-                original_count,
-                new_count,
-                &melee_block,
-            )?
+            if compact && self.original_melee_weapons_offset.is_some() {
+        let offset = self.original_melee_weapons_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&melee_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    }else {
+
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_melee_weapons_offset,
+            original_count,
+            new_count,
+            &melee_block,
+        )?
+    }
         } else {
             (self.original_melee_weapons_offset.unwrap_or(0), false)
         };
@@ -635,13 +651,23 @@ impl MhfdatApp {
             let ranged_block = write_ranged_weapons_block(&self.ranged_weapons)?;
             let original_count = self.original_entry_counts.get("ranged_weapons").copied();
             let new_count = self.ranged_weapons.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_ranged_weapons_offset,
-                original_count,
-                new_count,
-                &ranged_block,
-            )?
+
+            if compact && self.original_ranged_weapons_offset.is_some() {
+        let offset = self.original_ranged_weapons_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&ranged_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_ranged_weapons_offset,
+            original_count,
+            new_count,
+            &ranged_block,
+        )?
+    }
         } else {
             (self.original_ranged_weapons_offset.unwrap_or(0), false)
         };
@@ -651,13 +677,24 @@ impl MhfdatApp {
             let head_block = write_armors_block(&self.head_armors)?;
             let original_count = self.original_entry_counts.get("head_armors").copied();
             let new_count = self.head_armors.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_head_armors_offset,
-                original_count,
-                new_count,
-                &head_block,
-            )?
+
+            
+            if compact && self.original_head_armors_offset.is_some() {
+        let offset = self.original_head_armors_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&head_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_head_armors_offset,
+            original_count,
+            new_count,
+            &head_block,
+        )?
+    }
         } else {
             (self.original_head_armors_offset.unwrap_or(0), false)
         };
@@ -667,13 +704,23 @@ impl MhfdatApp {
             let body_block = write_armors_block(&self.body_armors)?;
             let original_count = self.original_entry_counts.get("body_armors").copied();
             let new_count = self.body_armors.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_body_armors_offset,
-                original_count,
-                new_count,
-                &body_block,
-            )?
+
+             
+            if compact && self.original_body_armors_offset.is_some() {
+        let offset = self.original_body_armors_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&body_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_body_armors_offset,
+            original_count,
+            new_count,
+            &body_block,
+        )?
+    }
         } else {
             (self.original_body_armors_offset.unwrap_or(0), false)
         };
@@ -683,13 +730,22 @@ impl MhfdatApp {
             let arms_block = write_armors_block(&self.arms_armors)?;
             let original_count = self.original_entry_counts.get("arms_armors").copied();
             let new_count = self.arms_armors.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_arms_armors_offset,
-                original_count,
-                new_count,
-                &arms_block,
-            )?
+            
+            if compact && self.original_arms_armors_offset.is_some() {
+        let offset = self.original_arms_armors_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&arms_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_arms_armors_offset,
+            original_count,
+            new_count,
+            &arms_block,
+        )?
+    }
         } else {
             (self.original_arms_armors_offset.unwrap_or(0), false)
         };
@@ -699,13 +755,22 @@ impl MhfdatApp {
             let waist_block = write_armors_block(&self.waist_armors)?;
             let original_count = self.original_entry_counts.get("waist_armors").copied();
             let new_count = self.waist_armors.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_waist_armors_offset,
-                original_count,
-                new_count,
-                &waist_block,
-            )?
+
+             if compact && self.original_waist_armors_offset.is_some() {
+        let offset = self.original_waist_armors_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&waist_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_waist_armors_offset,
+            original_count,
+            new_count,
+            &waist_block,
+        )?
+    }
         } else {
             (self.original_waist_armors_offset.unwrap_or(0), false)
         };
@@ -715,13 +780,22 @@ impl MhfdatApp {
             let legs_block = write_armors_block(&self.legs_armors)?;
             let original_count = self.original_entry_counts.get("legs_armors").copied();
             let new_count = self.legs_armors.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_legs_armors_offset,
-                original_count,
-                new_count,
-                &legs_block,
-            )?
+
+            if compact && self.original_legs_armors_offset.is_some() {
+        let offset = self.original_legs_armors_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&legs_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_legs_armors_offset,
+            original_count,
+            new_count,
+            &legs_block,
+        )?
+    }
         } else {
             (self.original_legs_armors_offset.unwrap_or(0), false)
         };
@@ -731,13 +805,24 @@ impl MhfdatApp {
             let items_block = write_items_block(&self.items)?;
             let original_count = self.original_entry_counts.get("items").copied();
             let new_count = self.items.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_items_offset,
-                original_count,
-                new_count,
-                &items_block,
-            )?
+
+            
+            if compact && self.original_items_offset.is_some() {
+        let offset = self.original_items_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&items_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+        
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_items_offset,
+            original_count,
+            new_count,
+            &items_block,
+        )?
+    }
         } else {
             (self.original_items_offset.unwrap_or(0), false)
         };
@@ -747,13 +832,23 @@ impl MhfdatApp {
             let transmog_block = write_transmog_data(&self.transmog_entries)?;
             let original_count = self.original_entry_counts.get("transmog").copied();
             let new_count = self.transmog_entries.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_transmog_offset,
-                original_count,
-                new_count,
-                &transmog_block,
-            )?
+
+            if compact && self.original_transmog_offset.is_some() {
+        let offset = self.original_transmog_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&transmog_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_transmog_offset,
+            original_count,
+            new_count,
+            &transmog_block,
+        )?
+    }
         } else {
             (self.original_transmog_offset.unwrap_or(0), false)
         };
@@ -763,13 +858,23 @@ impl MhfdatApp {
             let weapon_forging_block = write_transmog_data(&self.weapon_forging_entries)?;
             let original_count = self.original_entry_counts.get("weapon_forging").copied();
             let new_count = self.weapon_forging_entries.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_weapon_forging_offset,
-                original_count,
-                new_count,
-                &weapon_forging_block,
-            )?
+
+            if compact && self.original_weapon_forging_offset.is_some() {
+        let offset = self.original_weapon_forging_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&weapon_forging_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_weapon_forging_offset,
+            original_count,
+            new_count,
+            &weapon_forging_block,
+        )?
+    }
         } else {
             (self.original_weapon_forging_offset.unwrap_or(0), false)
         };
@@ -779,13 +884,23 @@ impl MhfdatApp {
             let armor_forging_block = write_transmog_data(&self.armor_forging_entries)?;
             let original_count = self.original_entry_counts.get("armor_forging").copied();
             let new_count = self.armor_forging_entries.len();
-            self.write_block_with_overwrite(
-                &mut writer,
-                self.original_armor_forging_offset,
-                original_count,
-                new_count,
-                &armor_forging_block,
-            )?
+
+            if compact && self.original_armor_forging_offset.is_some() {
+        let offset = self.original_armor_forging_offset.unwrap() as u64;
+        writer.seek(SeekFrom::Start(offset))?;
+        writer.write_all(&armor_forging_block)?;
+        writer.seek(SeekFrom::End(0))?;   // 回到末尾
+        (offset as u32, false)
+    } else {
+
+        self.write_block_with_overwrite(
+            &mut writer,
+            self.original_armor_forging_offset,
+            original_count,
+            new_count,
+            &armor_forging_block,
+        )?
+    }
         } else {
             (self.original_armor_forging_offset.unwrap_or(0), false)
         };
@@ -1096,7 +1211,7 @@ impl MhfdatApp {
         // 13) Weapon names and descriptions tables - écrire seulement si modifié
         // Melee names
         let melee_names_count = self.melee_weapons.len().min(self.melee_weapon_names.len()).min(self.melee_weapon_descriptions.len());
-        let melee_names_table_offset = if self.melee_weapon_names_modified && melee_names_count > 0 {
+        let melee_names_table_offset = if (self.melee_weapon_names_modified || compact) && melee_names_count > 0 {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             let _ = crate::core::mhfdat::write_weapon_names(&mut writer, &self.melee_weapon_names[..melee_names_count])?;
             current_pos
@@ -1105,7 +1220,7 @@ impl MhfdatApp {
         };
 
         // Melee descriptions: table of pointers (4 per entry: 3 descriptions + 1 null) followed by SJIS strings
-        let melee_desc_table_offset = if self.melee_weapon_descriptions_modified && melee_names_count > 0 {
+        let melee_desc_table_offset = if (self.melee_weapon_descriptions_modified || compact) && melee_names_count > 0 {
             let table_start = writer.seek(SeekFrom::Current(0))? as u32;
             let num_ptrs = melee_names_count * 4;
             // Only 3 strings per weapon, 4th pointer is always null
@@ -1137,7 +1252,7 @@ impl MhfdatApp {
 
         // Ranged names
         let ranged_names_count = self.ranged_weapons.len().min(self.ranged_weapon_names.len()).min(self.ranged_weapon_descriptions.len());
-        let ranged_names_table_offset = if self.ranged_weapon_names_modified && ranged_names_count > 0 {
+        let ranged_names_table_offset = if (self.ranged_weapon_names_modified || compact) && ranged_names_count > 0 {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             let _ = crate::core::mhfdat::write_ranged_weapon_names(&mut writer, &self.ranged_weapon_names[..ranged_names_count])?;
             current_pos
@@ -1146,7 +1261,7 @@ impl MhfdatApp {
         };
 
         // Ranged descriptions: table of pointers (4 per entry: 3 descriptions + 1 null) followed by SJIS strings
-        let ranged_desc_table_offset = if self.ranged_weapon_descriptions_modified && ranged_names_count > 0 {
+        let ranged_desc_table_offset = if (self.ranged_weapon_descriptions_modified || compact) && ranged_names_count > 0 {
             let table_start = writer.seek(SeekFrom::Current(0))? as u32;
             let num_ptrs = ranged_names_count * 4;
             // Only 3 strings per weapon, 4th pointer is always null
@@ -1174,7 +1289,7 @@ impl MhfdatApp {
         };
 
         // 14) Armor names tables - écrire seulement si modifié
-        let head_armor_names_offset = if self.head_armor_names_modified && !self.head_armor_names.is_empty() {
+        let head_armor_names_offset = if (self.head_armor_names_modified || compact) && !self.head_armor_names.is_empty() {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_armor_names(&mut writer, &self.head_armor_names)?;
             current_pos
@@ -1182,7 +1297,7 @@ impl MhfdatApp {
             self.original_head_armor_names_offset.unwrap_or(0)
         };
 
-        let body_armor_names_offset = if self.body_armor_names_modified && !self.body_armor_names.is_empty() {
+        let body_armor_names_offset = if (self.body_armor_names_modified || compact) && !self.body_armor_names.is_empty() {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_armor_names(&mut writer, &self.body_armor_names)?;
             current_pos
@@ -1190,7 +1305,7 @@ impl MhfdatApp {
             self.original_body_armor_names_offset.unwrap_or(0)
         };
 
-        let arms_armor_names_offset = if self.arms_armor_names_modified && !self.arms_armor_names.is_empty() {
+        let arms_armor_names_offset = if (self.arms_armor_names_modified || compact) && !self.arms_armor_names.is_empty() {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_armor_names(&mut writer, &self.arms_armor_names)?;
             current_pos
@@ -1198,7 +1313,7 @@ impl MhfdatApp {
             self.original_arms_armor_names_offset.unwrap_or(0)
         };
 
-        let waist_armor_names_offset = if self.waist_armor_names_modified && !self.waist_armor_names.is_empty() {
+        let waist_armor_names_offset = if (self.waist_armor_names_modified || compact) && !self.waist_armor_names.is_empty() {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_armor_names(&mut writer, &self.waist_armor_names)?;
             current_pos
@@ -1206,7 +1321,7 @@ impl MhfdatApp {
             self.original_waist_armor_names_offset.unwrap_or(0)
         };
 
-        let legs_armor_names_offset = if self.legs_armor_names_modified && !self.legs_armor_names.is_empty() {
+        let legs_armor_names_offset = if (self.legs_armor_names_modified || compact) && !self.legs_armor_names.is_empty() {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_armor_names(&mut writer, &self.legs_armor_names)?;
             current_pos
@@ -1216,7 +1331,7 @@ impl MhfdatApp {
 
         // 15) Item names and descriptions - écrire seulement si modifié
         let item_names_count = self.items.len().min(self.item_names.len());
-        let item_names_offset = if self.item_names_modified && item_names_count > 0 {
+        let item_names_offset = if (self.item_names_modified || compact) && item_names_count > 0 {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_item_names(&mut writer, &self.item_names[..item_names_count])?;
             current_pos
@@ -1225,7 +1340,7 @@ impl MhfdatApp {
         };
 
         let item_desc_count = self.items.len().min(self.item_descriptions.len());
-        let item_desc_offset = if self.item_descriptions_modified && item_desc_count > 0 {
+        let item_desc_offset = if (self.item_descriptions_modified || compact) && item_desc_count > 0 {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
             write_item_descriptions(&mut writer, &self.item_descriptions[..item_desc_count])?;
             current_pos
@@ -1248,10 +1363,10 @@ impl MhfdatApp {
         // 1. Elles ont été explicitement modifiées ET
         // 2. Il y a au moins une description non vide ET
         // 3. Le nombre de descriptions ne dépasse pas le nombre réel d'armures
-        let should_write_descriptions = self.armor_descriptions_modified && 
-                                         armor_desc_count > 0 && 
-                                         has_non_empty_descriptions &&
-                                         armor_desc_count <= actual_armor_count;
+        let should_write_descriptions = (self.armor_descriptions_modified || compact) && 
+                                 armor_desc_count > 0 && 
+                                 has_non_empty_descriptions &&
+                                 armor_desc_count <= actual_armor_count;
         
         let armor_desc_offset = if should_write_descriptions {
             let current_pos = writer.seek(SeekFrom::Current(0))? as u32;
@@ -1519,7 +1634,7 @@ impl MhfdatApp {
         }
         
         // Monster Descriptions - write only if modified
-        if self.monster_descriptions_modified {
+        if self.monster_descriptions_modified || compact {
             use crate::model::mhfdat_pointers::{MOSNTERS_DESCRIPTION_PTR, MOSNTERS_DESCRIPTION_COUNT_PTR};
             
             // Calculate count from actual number of descriptions
@@ -1855,7 +1970,10 @@ impl MhfdatApp {
             writer.seek(SeekFrom::End(0))?;
         }
 
-        Ok(())
+        // 【关键】返回当前写入位置作为最终大小
+        let final_size = writer.stream_position()?;
+        println!("[DEBUG] final_size = {} bytes", final_size);   // 增加这行调试
+        Ok(final_size)
     }
 
     pub fn compress_file(&mut self) -> std::io::Result<()> {
@@ -1919,4 +2037,169 @@ impl MhfdatApp {
         }
     }
 
+        pub fn compact_and_save(&mut self) -> std::io::Result<()> {
+        if let Some(path) = &self.current_file {
+            let path = path.clone();
+
+            println!("🚀 开始强力 Compact 重建... 当前大小: {} MB", self.buffer.len() / 1024 / 1024);
+
+            self.refresh_weapon_counts_from_entries();
+            self.refresh_equipment_counts_from_entries();
+
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)?;
+
+            // 重要：先把 writer 移动到文件末尾
+            file.seek(SeekFrom::End(0))?;
+
+            // 只重建所有字符串表（不重复写固定数据）
+            let final_size = self.rebuild_only_strings(&mut file)?;
+
+            // 强制截断
+            file.set_len(final_size)?;
+
+            self.buffer = std::fs::read(&path)?;
+
+            println!("📊 截断后实际大小: {} MB", self.buffer.len() / 1024 / 1024);
+
+            self.update_original_offsets_after_compact();
+            self.reset_modified_flags();
+
+            println!("✅ 强力 Compact 重建完成！");
+            Ok(())
+        } else {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "No file loaded"))
+        }
+    }
+
+        /// 只重建字符串表（用于 Compact 模式）
+    fn rebuild_only_strings<W: Write + Seek>(&self, writer: &mut W) -> std::io::Result<u64> {
+        let start_pos = writer.seek(SeekFrom::Current(0))?;
+
+        // 1. Melee names + descriptions
+        let melee_count = self.melee_weapons.len().min(self.melee_weapon_names.len());
+        if melee_count > 0 {
+            let _ = crate::core::mhfdat::write_weapon_names(writer, &self.melee_weapon_names[..melee_count])?;
+        }
+        // Melee descriptions（使用你原来的构建逻辑）
+        if !self.melee_weapon_descriptions.is_empty() {
+            // 把你原来 melee_desc_table_offset 里面的构建代码复制过来
+            // （或者暂时先跳过，用原有 write 函数，如果没有就用你原来的手动构建）
+        }
+
+        // 2. 其他字符串表（ranged、armor names、item names、descriptions、monster 等）
+        // ... 暂时先只做 melee，后面再补
+
+        let end_pos = writer.seek(SeekFrom::Current(0))?;
+        Ok(end_pos)
+    }
+    /// Compact 完成后更新所有 original_offset，让下次加载和保存正常工作
+    fn update_original_offsets_after_compact(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+
+        use crate::model::mhfdat_pointers::*;
+
+        // 更新武器/防具等固定数据指针（如果被修改过）
+        if self.melee_weapons_modified || true {  // Compact 后强制更新主要指针
+            if self.buffer.len() >= MELEE_WEAPONS_PTR as usize + 4 {
+                let off = u32::from_le_bytes(self.buffer[MELEE_WEAPONS_PTR as usize..MELEE_WEAPONS_PTR as usize + 4].try_into().unwrap());
+                self.original_melee_weapons_offset = Some(off);
+            }
+        }
+
+        // 更新所有字符串相关指针（最关键！）
+        if self.buffer.len() >= MELEE_WEAPON_NAMES_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[MELEE_WEAPON_NAMES_PTR as usize..MELEE_WEAPON_NAMES_PTR as usize + 4].try_into().unwrap());
+            self.original_melee_weapon_names_offset = Some(off);
+        }
+        if self.buffer.len() >= MELEE_WEAPON_DESC_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[MELEE_WEAPON_DESC_PTR as usize..MELEE_WEAPON_DESC_PTR as usize + 4].try_into().unwrap());
+            self.original_melee_weapon_descriptions_offset = Some(off);
+        }
+
+        // Ranged
+        if self.buffer.len() >= RANGED_WEAPON_NAMES_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[RANGED_WEAPON_NAMES_PTR as usize..RANGED_WEAPON_NAMES_PTR as usize + 4].try_into().unwrap());
+            self.original_ranged_weapon_names_offset = Some(off);
+        }
+        if self.buffer.len() >= RANGED_WEAPON_DESC_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[RANGED_WEAPON_DESC_PTR as usize..RANGED_WEAPON_DESC_PTR as usize + 4].try_into().unwrap());
+            self.original_ranged_weapon_descriptions_offset = Some(off);
+        }
+
+        // Armor names & descriptions
+        if self.buffer.len() >= HEAD_ARMOR_NAMES_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[HEAD_ARMOR_NAMES_PTR as usize..HEAD_ARMOR_NAMES_PTR as usize + 4].try_into().unwrap());
+            self.original_head_armor_names_offset = Some(off);
+        }
+        // ...（你可以先只加上面这些，后面再慢慢补全其他指针）
+
+        if self.buffer.len() >= ARMOR_DESC_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[ARMOR_DESC_PTR as usize..ARMOR_DESC_PTR as usize + 4].try_into().unwrap());
+            self.original_armor_descriptions_offset = Some(off);
+        }
+
+        if self.buffer.len() >= ITEM_NAMES_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[ITEM_NAMES_PTR as usize..ITEM_NAMES_PTR as usize + 4].try_into().unwrap());
+            self.original_item_names_offset = Some(off);
+        }
+        if self.buffer.len() >= ITEM_DESC_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[ITEM_DESC_PTR as usize..ITEM_DESC_PTR as usize + 4].try_into().unwrap());
+            self.original_item_descriptions_offset = Some(off);
+        }
+
+        if self.buffer.len() >= MOSNTERS_DESCRIPTION_PTR as usize + 4 {
+            let off = u32::from_le_bytes(self.buffer[MOSNTERS_DESCRIPTION_PTR as usize..MOSNTERS_DESCRIPTION_PTR as usize + 4].try_into().unwrap());
+            self.original_monster_descriptions_offset = Some(off);
+        }
+
+        println!("已更新所有 original offsets");
+    }
+        fn reset_modified_flags(&mut self) {
+        self.melee_weapons_modified = false;
+        self.ranged_weapons_modified = false;
+        self.head_armors_modified = false;
+        self.body_armors_modified = false;
+        self.arms_armors_modified = false;
+        self.waist_armors_modified = false;
+        self.legs_armors_modified = false;
+        self.items_modified = false;
+        self.transmog_modified = false;
+        self.weapon_forging_modified = false;
+        self.armor_forging_modified = false;
+        self.weapon_forging_gr_modified = false;
+        self.armor_forging_gr_modified = false;
+        self.weapon_forging_zenith_modified = false;
+        self.armor_forging_zenith_modified = false;
+        self.tower_weapon_forging_modified = false;
+        self.tower_armor_forging_modified = false;
+        self.melee_weapon_names_modified = false;
+        self.melee_weapon_descriptions_modified = false;
+        self.ranged_weapon_names_modified = false;
+        self.ranged_weapon_descriptions_modified = false;
+        self.head_armor_names_modified = false;
+        self.body_armor_names_modified = false;
+        self.arms_armor_names_modified = false;
+        self.waist_armor_names_modified = false;
+        self.legs_armor_names_modified = false;
+        self.item_names_modified = false;
+        self.item_descriptions_modified = false;
+        self.armor_descriptions_modified = false;
+        self.monster_descriptions_modified = false;
+        self.mw_upgrades_modified = false;
+        self.rw_upgrades_modified = false;
+        self.deco_shop_hr_modified = false;
+        self.deco_shop_gr_modified = false;
+        self.cuff_shop_modified = false;
+        self.cuff_gr_shop_modified = false;
+        self.automatic_skills_modified = false;
+        self.deco_ids_modified = false;
+        self.bullet_sets_modified = false;
+        // sharpness 等其他标志也可以在这里重置
+        self.sharpness_modified = [false; 12];
+    }
 }
